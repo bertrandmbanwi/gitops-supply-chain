@@ -1,21 +1,22 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: hello
+  name: policies
   namespace: argocd
+  annotations:
+    # sync the policy gate before the workload it governs
+    argocd.argoproj.io/sync-wave: "1"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
-annotations:
-    argocd.argoproj.io/sync-wave: "2"
 spec:
   project: default
   source:
     repoURL: https://github.com/bertrandmbanwi/gitops-supply-chain.git
     targetRevision: main
-    path: workloads/hello
+    path: policies
   destination:
     server: https://kubernetes.default.svc
-    namespace: hello
+    namespace: default
   syncPolicy:
     automated:
       prune: true

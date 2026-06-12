@@ -1,0 +1,27 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+spec:
+  rules:
+    - name: verify-hello-signed
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/bertrandmbanwi/hello-signed:*"
+          failureAction: Enforce
+          mutateDigest: true   # pin tag to verified digest on admission
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    # Trust ONLY this workflow identity on main, nothing else.
+                    subject: "https://github.com/bertrandmbanwi/gitops-supply-chain/.github/workflows/build-sign.yml@refs/heads/main"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: "https://rekor.sigstore.dev"

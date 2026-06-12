@@ -1,16 +1,70 @@
-# Build stage: compile a static, CGO-free binary.
-FROM golang:1.25-alpine AS build
-WORKDIR /src
-COPY go.mod ./
-RUN go mod download
-COPY main.go ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /app .
+name: build-sign
 
-# Runtime stage: distroless nonroot. No shell, no package manager, uid 65532.
-# Harden further in production by pinning this base by @sha256 digest.
-FROM gcr.io/distroless/static-debian12:nonroot
-WORKDIR /
-COPY --from=build /app /app
-EXPOSE 8080
-USER 65532:65532
-ENTRYPOINT ["/app"]
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/build-sign.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write   # required for cosign keyless (OIDC) signing
+
+env:
+  IMAGE: ghcr.io/bertrandmbanwi/hello-signed
+
+jobs:
+  build-sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.0
+        with:
+          cosign-release: "v3.0.6"
+
+      # Signed image: plain single-arch manifest (no provenance/sbom attestations,
+      # which would complicate the digest and keyless verification at this stage).
+      - name: Build and push signed image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          tags: ${{ env.IMAGE }}:0.1.0
+          provenance: false
+          sbom: false
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          echo "==> Signed ${IMAGE}@${DIGEST}"
+
+      # Unsigned image with a different digest (label change), for the negative test.
+      # Intentionally NOT signed.
+      - name: Build and push unsigned image
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          tags: ${{ env.IMAGE }}:unsigned
+          labels: variant=unsigned
+          provenance: false
+          sbom: false
+          no-cache: true
